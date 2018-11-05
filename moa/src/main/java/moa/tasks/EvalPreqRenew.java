@@ -1476,22 +1476,132 @@ public class EvalPreqRenew extends MainTask {
     }
     
     
-    private double calculateDynamicThresholdLocal(Classifier learnerInteractive, EMIC emicMeasure,
-			ConfidenceMeasure confidenceMeasure, long sizeTrainingSet,
-			double previousConfidenceThreshold) {
-		       
-        // Ordenamos por probabilidad
-        //Collections.sort(globalPredictions, new sortByReverseProbability());
+private double calculateWeightProb(Classifier learnerInteractive, EMIC emicMeasure, ConfidenceMeasure confidenceMeasure, Random random,
+             long sizeTrainingSet, Instances trainInstances, int k, int niteraciones) {
+      double w, gamma, step = 1.0/k;
+      System.out.println("calculateWeightProb"+step+"\n" );
+      int l, pos, Mpos;
+      double randomValue;
+      random.setSeed(3);
+      
+      int predictedClass;
+      int trueClass;
+      boolean askOracle = false;
+      double[] mediaF = new  double[ k ];
+      
+      EMIC[] emicMeasures = new EMIC[k];
+      long[] interactions = new  long[ k ];
+      long[] successes = new  long[ k ];
+      long[] fails = new  long[ k ];
+  
+      for(pos=0;pos<k;pos++) { 
+          mediaF[pos]=0.0;
+          emicMeasures[pos] = (EMIC) emicMeasure.copy();
+      } //inicialization
+
+      for (l=0; l< niteraciones; l++)  { //for1 l, repeat niteration in order to get an average
+          
+         for(pos= 0; pos <k; pos++) {
+            interactions[pos]=0; successes[pos]=0; fails[pos]=0;
+         }
+         long  numInstance = 0;
+          for (Iterator it = trainInstances.iterator(); it.hasNext();) {
+              Instance inst = (Instance)it.next();
+              // for2 ninstances
+              double[] probabilities = learnerInteractive.getVotesForInstance(inst);
+              String probString = "[";
+              try{
+                  weka.core.Utils.normalize(probabilities); //normalizamos las probabilidades para que la suma sea 1
+              } catch (Exception e) {
+                  // el perceptron nos puede devolver todas las probabilidades a 0
+                  for (int i = 0; i < probabilities.length; i++)
+                      probabilities[i] = 1.0/inst.numClasses();
+              } // catch
+              for (double pTmp : probabilities){
+                  probString += pTmp + " ";
+              }
+              probString += "]";
+              trueClass = (int) inst.classValue();
+              predictedClass = weka.core.Utils.maxIndex(probabilities);
+              randomValue = random.nextDouble();
+              for (gamma = step, pos=0;  pos < k; gamma+=step, pos++) { // for3
+                  
+                  askOracle = randomValue < (1.0 - probabilities[predictedClass])*gamma;
+                  
+                  // Forzamos la clase verdadera
+                  if (askOracle){
+                      // probabilities[trueClass] = 1;
+                      interactions[pos]++;
+                  }
+                  else{
+                      if (predictedClass == trueClass){
+                          successes[pos]++;
+                      }
+                      else fails[pos]++;
+                  }
+                  
+              } //for3 gamma
+              numInstance++;
+//               System.out.println("\n 333  "+ randomValue+" \n");
+
+//            for (pos=0;  pos < k; pos++) { // for 2
+//                 System.out.println("gam"+ (pos+1)*step + " ni=" +interactions[pos] + " nc=" +successes[pos]+ " nw=" + fails[pos]);
+
+//            }
+          } //for2   
+               System.out.println("\n\n");
+            for (pos=0;  pos < k; pos++) { // for 2 
+                 emicMeasures[pos].setFails(fails[pos]);
+                 emicMeasures[pos].setInteractions(interactions[pos]);
+                 emicMeasures[pos].setSuccesses(successes[pos]);
+                 emicMeasures[pos].setTotal(numInstance);
+                 double fb = emicMeasures[pos].getValue();
+                 System.out.println("gam"+ (pos+1)*step + " ni=" +interactions[pos] + " nc=" +successes[pos]+ " nw=" + fails[pos]+ "Fb" + fb);
+
+                 mediaF[pos]+= fb;
+            }         
+      } //for1
+      gamma = -1.0;  // un número negativo fuera del rango ]0..1]
+      for (Mpos = 0, pos=0;  pos < k; pos++) { // for3  
+           mediaF[pos]/= niteraciones;
+           if (gamma < mediaF[pos]){
+                     gamma = mediaF[pos];
+                     Mpos = pos;
+           }
+      }
+      gamma = step* (1+Mpos);
+      System.out.println("*** gamma"+ gamma+ "\n");
+      return gamma;
+ }
+    
+        /*
+     * Resumimos y eliminamos los datos que sean mayores que el umbral,
+     * ya que teóricamente hemos demostrado que no puede aumentar.
+     * De esta manera, podremos optimizar el procesamiento al tener
+     * menos datos en el conjunto.
+     */
+    private void summarizeTrainingSet(double threshold){
         
-        // Vamos calculando la medida EMIC de forma iterativa
-        //double[] emicMeasureValues = new double[sizeTrainingSet];
-        emicMeasure.setTotal(sizeTrainingSet);
-        emicMeasure.setInteractions(sizeTrainingSet - sizeSummaryData);
-        emicMeasure.setSuccesses(successesSummaryData);
-        emicMeasure.setFails(failsSummaryData);
+        Iterator<Prediction> it = globalPredictions.iterator();
         
-        double bestEmicValue = emicMeasure.getValue();
-        double bestConfidenceThreshold = previousConfidenceThreshold;
-        double previousThresholdValue = 1.000001;
-        long bestSuccesses = 0;
-        long bestFails = 0
+        while(it.hasNext()){
+            Prediction p = it.next();
+            
+            if (p.confidenceValue > threshold){
+                sizeSummaryData++;
+                
+                if (p.loss){
+                    successesSummaryData++;
+                }
+                else{
+                    failsSummaryData++;
+                }
+                it.remove();
+            }
+            else{
+                break;
+            }
+            
+        }
+    }
+	}
